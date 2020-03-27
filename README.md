@@ -26,8 +26,6 @@ In order to train and test on other datasets, modify the `dataset.py` file in th
 ## Citation
 If you use this code for your research, please cite our [MICCAI paper](https://doi.org/10.1007/978-3-030-00934-2_1) or [MIA paper](https://doi.org/10.1016/j.media.2019.06.015):
 
-[Segmenting and Tracking Cell Instances with Cosine Embeddings and Recurrent Hourglass Networks](https://doi.org/10.1016/j.media.2019.06.015):
-
 ```
 @article{Payer2019b,
   title   = {Segmenting and Tracking Cell Instances with Cosine Embeddings and Recurrent Hourglass Networks},
