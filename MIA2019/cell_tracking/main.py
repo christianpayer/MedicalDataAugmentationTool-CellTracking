@@ -2,7 +2,7 @@
 from collections import OrderedDict
 import os
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 
 from tensorflow_train.losses.instance_segmentation_losses_MIA import cosine_embedding_per_instance_batch_loss
 import utils.io.image
@@ -428,7 +428,8 @@ class MainLoop(MainLoopBase):
         # solver
         global_step = tf.Variable(self.current_iter)
         learning_rate = tf.train.piecewise_constant(global_step, self.learning_rate_boundaries, self.learning_rates)
-        optimizer = tf.contrib.opt.NadamOptimizer(learning_rate=learning_rate)
+        #optimizer = tf.contrib.opt.NadamOptimizer(learning_rate=learning_rate)
+        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
         self.optimizer = optimizer.minimize(self.loss, global_step=global_step)
 
         # initialize variables

@@ -1,4 +1,4 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 from tensorflow_train.layers.layers import conv2d, add, max_pool2d, upsample2d
 from tensorflow_train.layers.initializers import selu_initializer, he_initializer
 from tensorflow_train.networks.unet_lstm_dynamic_MIA import UnetRecurrentCell2D, UnetRecurrentWithStates
