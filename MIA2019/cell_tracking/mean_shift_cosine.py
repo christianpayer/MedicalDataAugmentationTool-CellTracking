@@ -18,7 +18,7 @@ import numpy as np
 import warnings
 
 from collections import defaultdict
-from sklearn.externals import six
+import six
 from sklearn.utils.validation import check_is_fitted
 from sklearn.utils import check_random_state, gen_batches, check_array
 from sklearn.base import BaseEstimator, ClusterMixin
