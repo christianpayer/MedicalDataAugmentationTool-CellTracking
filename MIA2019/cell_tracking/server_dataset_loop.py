@@ -6,13 +6,13 @@ Pyro4.config.SERIALIZERS_ACCEPTED = {'pickle'}
 import socket
 from datasets.pyro_dataset import PyroServerDataset
 
-from bin.experiments.instance_segmentation.cell_tracking_MIA2019.dataset import Dataset
+from dataset import Dataset
 
 
 @Pyro4.expose
 class CellTrackingServerDataset(PyroServerDataset):
     def __init__(self):
-        super(CellTrackingServerDataset, self).__init__(queue_size=8, refill_queue_factor=0.0, n_threads=8, use_multiprocessing=False)
+        super(CellTrackingServerDataset, self).__init__(queue_size=128, refill_queue_factor=0.0, n_threads=8, use_multiprocessing=True)
 
     def init_with_parameters(self, *args, **kwargs):
         # TODO: adapt base folder, in case this script runs on a remote server
