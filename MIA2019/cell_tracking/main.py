@@ -8,7 +8,6 @@ from tensorflow_train.losses.instance_segmentation_losses_MIA import cosine_embe
 import utils.io.image
 from tensorflow_train.utils.tensorflow_util import get_reg_loss, create_placeholders, print_progress_bar
 from tensorflow_train.data_generator_padding import DataGeneratorPadding
-from tensorflow_train.data_generator_dataset import DataGeneratorDataset
 from tensorflow_train.train_loop import MainLoopBase
 from dataset import Dataset
 from datasets.pyro_dataset import PyroClientDataset
@@ -200,13 +199,14 @@ class MainLoop(MainLoopBase):
         self.save_intermediate_instance_images = True
         self.save_challenge_instance_images = True
         self.save_overlapping_embeddings = True
-        self.use_pyro_dataset = True
+        self.use_pyro_dataset = False
 
         self.image_size, self.test_image_size = image_sizes_for_dataset_name(dataset_name)
         self.tiled_processing = True
         self.tiled_increment = [128, 128]
         self.instances_ignore_border = [48, 48]
         self.scale_factor = [self.image_size[i] / self.test_image_size[i] for i in range(2)]
+        self.load_neighbors = True
         self.normalized_embeddings = False
         self.use_seg_file = False
         self.num_frames = num_frames
@@ -216,7 +216,7 @@ class MainLoop(MainLoopBase):
         folder_string = get_folder_string(self.image_size[0], num_embeddings, network_string, optimizer_string)
 
         self.snapshot_iter = 10000
-        self.test_initialization = True
+        self.test_initialization = False
         self.current_iter = 0
         self.reg_constant = 0.00001
         self.bitwise_instance_image = True
@@ -238,9 +238,9 @@ class MainLoop(MainLoopBase):
             self.time_stack_axis = 0
         self.num_embeddings = num_embeddings
         self.dataset_name = dataset_name
-        self.base_folder = os.path.join('/media1/datasets/celltrackingchallenge/trainingdataset/mha/', self.dataset_name)
-        self.base_folder_test = os.path.join('/media1/datasets/celltrackingchallenge/challengedataset/mha/', self.dataset_name)
-        self.output_base_folder = os.path.join('/media0/experiments/cell_tracking_github_test/', self.dataset_name)
+        self.base_folder = os.path.join('../../celltrackingchallenge/trainingdataset/', self.dataset_name)
+        self.base_folder_test = os.path.join('../../celltrackingchallenge/challengedataset/', self.dataset_name)
+        self.output_base_folder = os.path.join('./output/', self.dataset_name)
         self.output_folder = os.path.join(self.output_base_folder, folder_string + '_' + self.output_folder_timestamp())
         self.embedding_factors = {'bac': 1.0,
                                   'tra': 1.0}
@@ -269,6 +269,7 @@ class MainLoop(MainLoopBase):
                                    'train_id_file': train_id_file,
                                    'val_id_file': val_id_file,
                                    'scale_factor': self.scale_factor,
+                                   'load_neighbors': self.load_neighbors,
                                    'bitwise_instance_image': self.bitwise_instance_image})
         dataset = Dataset(**dataset_parameters)
         if self.use_pyro_dataset:
@@ -295,6 +296,7 @@ class MainLoop(MainLoopBase):
                                        'load_seg_loss_mask': False,
                                        'create_instances_bac': False,
                                        'create_instances_merged': False,
+                                       'load_neighbors': False,
                                        })
         dataset = Dataset(**dataset_val_parameters)
         self.dataset_val = dataset.dataset_val_single_frame()
@@ -311,6 +313,7 @@ class MainLoop(MainLoopBase):
                                         'load_seg_loss_mask': False,
                                         'create_instances_bac': False,
                                         'create_instances_merged': False,
+                                        'load_neighbors': False,
                                         'scale_factor': [1.0, 1.0]})
         dataset = Dataset(**dataset_test_parameters)
         self.dataset_test = dataset.dataset_val_single_frame()
@@ -616,7 +619,7 @@ class MainLoop(MainLoopBase):
                 else:
                     stacked_two_embeddings_tile_list = []
                     for tile_i in range(len(current_all_intermediate_embeddings[0])):
-                        stacked_two_embeddings_tile_list.append(np.stack([current_all_intermediate_embeddings[num_frames - 2][tile_i], current_all_intermediate_embeddings[num_frames - 1][tile_i]], axis=self.time_stack_axis))
+                        stacked_two_embeddings_tile_list.append(np.stack([current_all_intermediate_embeddings[self.num_frames - 2][tile_i], current_all_intermediate_embeddings[self.num_frames - 1][tile_i]], axis=self.time_stack_axis))
                     if self.save_instances:
                         instances = self.get_merged_instances(stacked_two_embeddings_tile_list)
                         instance_tracker.add_new_label_image(instances)
@@ -683,4 +686,3 @@ if __name__ == '__main__':
     for dataset in datasets:
         loop = MainLoop('train_all', dataset, 16, UnetIntermediateGruWithStates2D, network_parameters, num_frames, 0.0001)
         loop.run()
-
