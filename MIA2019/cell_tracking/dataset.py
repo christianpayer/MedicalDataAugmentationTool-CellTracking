@@ -5,10 +5,10 @@ import math
 import random
 
 from graph.node import LambdaNode
-from datasets.reference_image_transformation_dataset import ReferenceTransformationDataset
 from datasets.graph_dataset import GraphDataset
 from datasources.cached_image_datasource import CachedImageDataSource
 from datasources.label_datasource import LabelDatasource
+from datasources.json_datasource import JsonDatasource
 from generators.image_generator import ImageGenerator
 from generators.label_generator import LabelGenerator
 from iterators.id_list_iterator import IdListIterator
@@ -43,6 +43,7 @@ class Dataset(object):
                  load_merged=True,
                  load_has_complete_seg=True,
                  load_seg_loss_mask=True,
+                 load_neighbors=False,
                  create_instances_merged=True,
                  create_instances_bac=True,
                  seg_mask=True,
@@ -71,6 +72,7 @@ class Dataset(object):
         self.train_id_list_file_name = os.path.join(self.setup_base_folder, train_id_file)
         self.val_id_list_file_name = os.path.join(self.setup_base_folder, val_id_file)
         self.seg_mask_file_name = os.path.join(self.setup_base_folder, 'seg_masks.csv')
+        self.neighbors_file_name = os.path.join(self.setup_base_folder, 'instance_neighbors.json')
         self.save_debug_images = save_debug_images
 
         self.loss_mask_dilation_size = loss_mask_dilation_size
@@ -79,6 +81,7 @@ class Dataset(object):
         self.load_merged = load_merged
         self.load_has_complete_seg = load_has_complete_seg
         self.load_seg_loss_mask = load_seg_loss_mask
+        self.load_neighbors = load_neighbors
         self.create_instances_bac = create_instances_bac
         self.create_instances_merged = create_instances_merged
 
@@ -169,6 +172,8 @@ class Dataset(object):
         for name, datasource in datasources_single_frame_dict.items():
             if name == 'image' or name == 'merged' or name == 'seg_loss_mask':
                 datasources_dict[name] = VideoFrameListDatasource(datasource, postprocessing=accumulate, name=name, parents=[iterator])
+            elif name == 'neighbors':
+                datasources_dict[name] = VideoFrameListDatasource(datasource, postprocessing=lambda x: x[0], name=name, parents=[iterator])
             else:
                 datasources_dict[name] = VideoFrameListDatasource(datasource, name=name, parents=[iterator])
 
@@ -184,7 +189,7 @@ class Dataset(object):
         data_generators_dict = {}
         data_generators_single_frame_dict = self.data_generators_single_frame(dim, sources, image_transformation, image_post_processing)
         for name, data_generator in data_generators_single_frame_dict.items():
-            if name == 'image' or name == 'merged' or name == 'seg_loss_mask':
+            if name == 'image' or name == 'merged' or name == 'seg_loss_mask' or name == 'neighbors':
                 data_generators_dict[name] = data_generator
             else:
                 data_generators_dict[name] = VideoFrameListGenerator(data_generator,
@@ -242,6 +247,8 @@ class Dataset(object):
                                                                    id_dict_preprocessing=lambda x: {'image_id': x['video_id'] + '/' + x['frame_id']},
                                                                    name='has_complete_seg',
                                                                    parents=[iterator])
+        if self.load_neighbors:
+            datasources_dict['neighbors'] = JsonDatasource(self.neighbors_file_name, key='video_id', name='neighbors', parents=[iterator])
         return datasources_dict
 
     def data_generators_single_frame(self, dim, datasources, image_transformation, image_post_processing):
@@ -279,6 +286,8 @@ class Dataset(object):
         if self.load_has_complete_seg:
             data_generators_dict['has_complete_seg'] = LabelGenerator(name='has_complete_seg',
                                                                       parents=[datasources['has_complete_seg']])
+        if self.load_neighbors:
+            data_generators_dict['neighbors'] = datasources['neighbors']
         return data_generators_dict
 
     def binary_labels(self, image):
@@ -325,12 +334,19 @@ class Dataset(object):
             com = com[1:]
             is_in_frame = np.any(np.any(target_label, axis=1), axis=1)
             min_index = np.maximum(np.min(np.where(is_in_frame)) - 1, 0)
-            max_index = np.minimum(np.max(np.where(is_in_frame)) + 1, target_label.shape[frame_axis])
+            max_index = np.minimum(np.max(np.where(is_in_frame)) + 2, target_label.shape[frame_axis])
             #for i in range(target_label.shape[frame_axis]):
             for i in range(min_index, max_index):
                 current_slice = [slice(None), slice(None)]
                 current_slice.insert(frame_axis, slice(i, i + 1))
-                #com = center_of_mass(np.squeeze(target_label[tuple(current_slice)]))
+                if i == min_index:
+                    next_slice = [slice(None), slice(None)]
+                    next_slice.insert(frame_axis, slice(i + 1, i + 2))
+                    mask[tuple(current_slice)] = np.logical_or(mask[tuple(next_slice)], mask[tuple(current_slice)])
+                if i == max_index - 1:
+                    previous_slice = [slice(None), slice(None)]
+                    previous_slice.insert(frame_axis, slice(i - 1, i))
+                    mask[tuple(current_slice)] = np.logical_or(mask[tuple(previous_slice)], mask[tuple(current_slice)])
                 current_mask = np.squeeze(mask[tuple(current_slice)], axis=frame_axis)
                 draw_circle(current_mask, com, circle_radius)
         else:
@@ -370,6 +386,41 @@ class Dataset(object):
         for label in labels:
             other_instance_image = self.other_instance_image(target_label=label, other_labels=labels)
             instance_image_pairs.append((label, other_instance_image))
+            num_instances += 1
+            if self.max_num_instances is not None and num_instances >= self.max_num_instances:
+                break
+        return self.merge_instance_image_pairs(instance_image_pairs, instances_datatype, channel_axis)
+
+    def instance_image_from_neighbors(self, image, neighbors, instances_datatype):
+        """
+        Returns the stacked instance images for the current instance segmentation. The resulting np array contains
+        images for instances that are stacked at the channel axis. Each entry of the channel axis corresponds to
+        a certain instance, where pixels with value 1 indicate the instance, 2 other neighboring instances, and 0 background.
+        The neighbors are obtained from a loaded neighbors.json file.
+        :param image: The groundtruth instance segmentation.
+        :param instances_datatype: The np datatype for the bitwise instance image.
+        :return: The stacked instance image.
+        """
+        channel_axis = self.get_channel_axis(image, self.data_format)
+        image_squeezed = np.squeeze(image, axis=channel_axis)
+        labels = np.unique(image_squeezed).tolist()
+        if len(labels) == 1:
+            return np.zeros_like(image)
+        del labels[0]
+
+        if self.max_num_instances is not None and len(labels) > self.max_num_instances:
+            random.shuffle(labels)
+
+        instance_image_pairs = []
+        num_instances = 0
+        for label in labels:
+            label_image = image_squeezed == label
+            other_instance_image = np.zeros_like(label_image)
+            current_neighbors = neighbors[str(label)]
+            visible_neighbors = set(labels).intersection(set(current_neighbors))
+            for other_label in visible_neighbors:
+                other_instance_image = np.bitwise_or(other_instance_image, image_squeezed == other_label)
+            instance_image_pairs.append((label_image.astype(np.uint8), other_instance_image.astype(np.uint8)))
             num_instances += 1
             if self.max_num_instances is not None and num_instances >= self.max_num_instances:
                 break
@@ -417,7 +468,10 @@ class Dataset(object):
         final_generators_dict['image'] = generators_dict['image']
 
         if self.create_instances_merged:
-            final_generators_dict['instances_merged'] = LambdaNode(lambda x: self.instance_image(x, self.instances_datatype), name='instances_merged', parents=[generators_dict['merged']])
+            if self.load_neighbors:
+                final_generators_dict['instances_merged'] = LambdaNode(lambda image, neighbors: self.instance_image_from_neighbors(image, neighbors, self.instances_datatype), name='instances_merged', parents=[generators_dict['merged'], generators_dict['neighbors']])
+            else:
+                final_generators_dict['instances_merged'] = LambdaNode(lambda image: self.instance_image(image, self.instances_datatype), name='instances_merged', parents=[generators_dict['merged']])
 
         if self.create_instances_bac:
             def instances_bac(merged, seg_loss_mask, has_complete_seg):
@@ -579,7 +633,7 @@ class Dataset(object):
         dim = 3
         full_video_frame_list_image = VideoFrameList(self.video_frame_list_file_name, self.num_frames - 1, 0,
                                                      border_mode='valid', random_start=True, random_skip_probability=self.random_skip_probability)
-        iterator = IdListIterator(self.train_id_list_file_name, random=True, keys=['video_id', 'frame_id'],
+        iterator = IdListIterator(self.train_id_list_file_name, random=True, use_shuffle=False, keys=['video_id', 'frame_id'],
                                         postprocessing=lambda x: full_video_frame_list_image.get_id_dict_list(x['video_id'], x['frame_id']))
 
         sources = self.datasources(iterator)
@@ -599,7 +653,7 @@ class Dataset(object):
         Returns the training dataset for single frames. Random augmentation is performed.
         :return: The training dataset.
         """
-        iterator = IdListIterator(self.train_id_list_file_name, random=True, keys=['video_id', 'frame_id'])
+        iterator = IdListIterator(self.train_id_list_file_name, random=True, use_shuffle=False, keys=['video_id', 'frame_id'])
 
         sources = self.datasources_single_frame(iterator)
         image_key = 'merged' if self.pad_image or self.crop_image_size is not None else 'image'
