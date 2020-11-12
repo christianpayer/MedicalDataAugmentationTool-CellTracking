@@ -670,12 +670,12 @@ class MainLoop(MainLoopBase):
 
 
 if __name__ == '__main__':
-    datasets = [#'DIC-C2DH-HeLa',
-                #'Fluo-N2DL-HeLa',
+    datasets = ['DIC-C2DH-HeLa',
+                'Fluo-N2DL-HeLa',
                 'Fluo-N2DH-GOWT1',
-                #'Fluo-N2DH-SIM+',
-                #'PhC-C2DH-U373',
-                #'Fluo-C2DL-MSC',
+                'Fluo-N2DH-SIM+',
+                'PhC-C2DH-U373',
+                'Fluo-C2DL-MSC',
                 ]
     network_parameters = {'stacked_hourglass': True,
                           'filters': 64,
